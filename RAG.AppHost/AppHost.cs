@@ -54,14 +54,14 @@ if (useGemini)
         .WithEnvironment("Rag__Ai__Provider", "Gemini")
         .WithEnvironment("Rag__Ai__BaseUrl", "https://generativelanguage.googleapis.com/v1beta/")
         .WithEnvironment("Rag__Ai__EmbeddingModel", "gemini-embedding-2")
-        .WithEnvironment("Rag__Ai__ChatModel", Environment.GetEnvironmentVariable("GEMINI_CHAT_MODEL") ?? "gemini-2.5-flash-lite")
+        .WithEnvironment("Rag__Ai__ChatModel", Environment.GetEnvironmentVariable("GEMINI_CHAT_MODEL") ?? "gemini-2.5-pro")
         .WithEnvironment("GEMINI_API_KEY", geminiApiKey ?? "");
 
     worker = worker
         .WithEnvironment("Rag__Ai__Provider", "Gemini")
         .WithEnvironment("Rag__Ai__BaseUrl", "https://generativelanguage.googleapis.com/v1beta/")
         .WithEnvironment("Rag__Ai__EmbeddingModel", "gemini-embedding-2")
-        .WithEnvironment("Rag__Ai__ChatModel", Environment.GetEnvironmentVariable("GEMINI_CHAT_MODEL") ?? "gemini-2.5-flash-lite")
+        .WithEnvironment("Rag__Ai__ChatModel", Environment.GetEnvironmentVariable("GEMINI_CHAT_MODEL") ?? "gemini-2.5-pro")
         .WithEnvironment("GEMINI_API_KEY", geminiApiKey ?? "");
 }
 else
