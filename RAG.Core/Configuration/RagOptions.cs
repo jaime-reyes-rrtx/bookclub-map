@@ -40,6 +40,6 @@ public sealed class IngestionOptions
 {
     public int ChunkTokenCount { get; set; } = 800;
     public int ChunkOverlapTokens { get; set; } = 100;
-    public long MaxUploadBytes { get; set; } = 25 * 1024 * 1024;
+    public long MaxUploadBytes { get; set; } = 100 * 1024 * 1024;
     public int PollIntervalSeconds { get; set; } = 5;
 }

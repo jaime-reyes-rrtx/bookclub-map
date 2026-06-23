@@ -11,7 +11,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRagCore(builder.Configuration);
 builder.Services.Configure<FormOptions>(options =>
 {
-    options.MultipartBodyLengthLimit = 25 * 1024 * 1024;
+    options.MultipartBodyLengthLimit = builder.Configuration.GetValue<long>(
+        "Rag:Ingestion:MaxUploadBytes",
+        100 * 1024 * 1024);
 });
 
 var app = builder.Build();
