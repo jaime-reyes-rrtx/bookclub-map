@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>RAG Pipeline Workbench</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <main class="shell">
+        <section class="masthead">
+            <div>
+                <p class="eyebrow">Aspire RAG sample</p>
+                <h1>Document workbench</h1>
+            </div>
+            <div class="system-strip" aria-label="Pipeline">
+                <span>Upload</span>
+                <span>Extract</span>
+                <span>Embed</span>
+                <span>Ask</span>
+            </div>
+        </section>
+
+        <section class="workspace" aria-label="Document and chat workspace">
+            <form id="uploadForm" class="panel upload-panel">
+                <div class="panel-heading">
+                    <h2>Documents</h2>
+                    <span id="uploadStatus" class="status-label">Ready</span>
+                </div>
+                <label class="drop-zone" for="fileInput">
+                    <input id="fileInput" name="file" type="file" accept=".pdf,.txt">
+                    <span class="drop-title">Choose a PDF or TXT file</span>
+                    <span class="drop-meta">Original files are stored before indexing.</span>
+                </label>
+                <button type="submit">Upload document</button>
+                <div id="documents" class="document-list" aria-live="polite"></div>
+            </form>
+
+            <section class="panel chat-panel">
+                <div class="panel-heading">
+                    <h2>Ask</h2>
+                    <span id="chatStatus" class="status-label">Idle</span>
+                </div>
+                <div id="answer" class="answer empty">Indexed citations will appear with each answer.</div>
+                <form id="askForm" class="ask-form">
+                    <textarea id="questionInput" rows="4" placeholder="Ask about the uploaded documents"></textarea>
+                    <button type="submit">Ask question</button>
+                </form>
+                <div id="citations" class="citation-list"></div>
+            </section>
+        </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+</body>
+</html>

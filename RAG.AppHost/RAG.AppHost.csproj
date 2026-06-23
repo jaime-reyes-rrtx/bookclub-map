@@ -1,0 +1,16 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.4.6">
+
+    <ItemGroup>
+      <ProjectReference Include="..\RAG.Api\RAG.Api.csproj" />
+      <ProjectReference Include="..\RAG.Worker\RAG.Worker.csproj" />
+    </ItemGroup>
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <UserSecretsId>aa951a8c-1bb8-4863-8a56-2f699c7e1e8c</UserSecretsId>
+    </PropertyGroup>
+
+</Project>
