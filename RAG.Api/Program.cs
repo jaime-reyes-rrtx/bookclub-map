@@ -128,6 +128,16 @@ app.MapPost("/api/ask", async (
     {
         return Results.BadRequest(new { error = ex.Message });
     }
+    catch (AiProviderException ex)
+    {
+        app.Logger.LogWarning(ex, "AI provider failed while answering a question.");
+        return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status502BadGateway);
+    }
+    catch (HttpRequestException ex)
+    {
+        app.Logger.LogWarning(ex, "HTTP dependency failed while answering a question.");
+        return Results.Json(new { error = "A downstream AI or vector service request failed. Check the Aspire logs for details." }, statusCode: StatusCodes.Status502BadGateway);
+    }
 });
 
 app.MapFallbackToFile("index.html");

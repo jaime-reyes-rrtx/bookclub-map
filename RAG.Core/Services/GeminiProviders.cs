@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -14,17 +15,22 @@ public sealed class GeminiEmbeddingProvider(HttpClient httpClient, IOptions<RagO
     public async Task<float[]> GenerateEmbeddingAsync(string input, CancellationToken cancellationToken)
     {
         var ai = _options.Ai;
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"models/{ai.EmbeddingModel}:embedContent")
-        {
-            Content = JsonContent.Create(new GeminiEmbeddingRequest(
-                new GeminiContent([new GeminiPart(input)]),
-                _options.Qdrant.VectorSize))
-        };
+        using var response = await GeminiHttp.SendWithRetriesAsync(
+            httpClient,
+            () =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, $"models/{ai.EmbeddingModel}:embedContent")
+                {
+                    Content = JsonContent.Create(new GeminiEmbeddingRequest(
+                        new GeminiContent([new GeminiPart(input)]),
+                        _options.Qdrant.VectorSize))
+                };
 
-        request.Headers.Add("x-goog-api-key", ResolveApiKey(ai));
-
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+                request.Headers.Add("x-goog-api-key", ResolveApiKey(ai));
+                return request;
+            },
+            "embedding",
+            cancellationToken);
 
         var result = await response.Content.ReadFromJsonAsync<GeminiEmbeddingResponse>(cancellationToken);
         var values = result?.Embedding?.Values ?? result?.Embeddings?.FirstOrDefault()?.Values;
@@ -68,17 +74,22 @@ public sealed class GeminiChatCompletionProvider(HttpClient httpClient, IOptions
         string userPrompt,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"models/{_options.ChatModel}:generateContent")
-        {
-            Content = JsonContent.Create(new GeminiGenerateContentRequest(
-                new GeminiContent([new GeminiPart(systemPrompt)]),
-                [new GeminiContent([new GeminiPart(userPrompt)])]))
-        };
+        using var response = await GeminiHttp.SendWithRetriesAsync(
+            httpClient,
+            () =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, $"models/{_options.ChatModel}:generateContent")
+                {
+                    Content = JsonContent.Create(new GeminiGenerateContentRequest(
+                        new GeminiContent([new GeminiPart(systemPrompt)]),
+                        [new GeminiContent([new GeminiPart(userPrompt)])]))
+                };
 
-        request.Headers.Add("x-goog-api-key", ResolveApiKey(_options));
-
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+                request.Headers.Add("x-goog-api-key", ResolveApiKey(_options));
+                return request;
+            },
+            "chat completion",
+            cancellationToken);
 
         var result = await response.Content.ReadFromJsonAsync<GeminiGenerateContentResponse>(cancellationToken);
         var text = result?.Candidates?
@@ -240,3 +251,81 @@ internal sealed record GeminiContent(
 
 internal sealed record GeminiPart(
     [property: JsonPropertyName("text")] string Text);
+
+internal static class GeminiHttp
+{
+    private const int MaxAttempts = 3;
+
+    public static async Task<HttpResponseMessage> SendWithRetriesAsync(
+        HttpClient httpClient,
+        Func<HttpRequestMessage> createRequest,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        string? lastError = null;
+
+        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+        {
+            using var request = createRequest();
+            HttpResponseMessage response;
+            try
+            {
+                response = await httpClient.SendAsync(request, cancellationToken);
+            }
+            catch (HttpRequestException ex) when (attempt < MaxAttempts)
+            {
+                lastError = ex.Message;
+                await DelayBeforeRetryAsync(attempt, cancellationToken);
+                continue;
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                return response;
+            }
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            lastError = BuildErrorMessage(operation, response.StatusCode, response.ReasonPhrase, body);
+            var shouldRetry = IsTransient(response.StatusCode) && attempt < MaxAttempts;
+            response.Dispose();
+
+            if (!shouldRetry)
+            {
+                throw new AiProviderException(lastError);
+            }
+
+            await DelayBeforeRetryAsync(attempt, cancellationToken);
+        }
+
+        throw new AiProviderException($"Gemini {operation} failed after {MaxAttempts} attempts. {lastError}");
+    }
+
+    private static bool IsTransient(HttpStatusCode statusCode)
+    {
+        return statusCode is
+            HttpStatusCode.TooManyRequests or
+            HttpStatusCode.InternalServerError or
+            HttpStatusCode.BadGateway or
+            HttpStatusCode.ServiceUnavailable or
+            HttpStatusCode.GatewayTimeout;
+    }
+
+    private static Task DelayBeforeRetryAsync(int attempt, CancellationToken cancellationToken)
+    {
+        return Task.Delay(TimeSpan.FromMilliseconds(350 * attempt), cancellationToken);
+    }
+
+    private static string BuildErrorMessage(string operation, HttpStatusCode statusCode, string? reasonPhrase, string body)
+    {
+        var detail = string.IsNullOrWhiteSpace(body)
+            ? reasonPhrase
+            : string.Join(' ', body.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+        if (!string.IsNullOrWhiteSpace(detail) && detail.Length > 500)
+        {
+            detail = detail[..500] + "...";
+        }
+
+        return $"Gemini {operation} failed with HTTP {(int)statusCode} {statusCode}. {detail}";
+    }
+}

@@ -18,18 +18,26 @@ public sealed class DocumentIngestionService(
     public async Task<int> IngestPendingDocumentsAsync(CancellationToken cancellationToken)
     {
         var staleProcessingCutoff = DateTimeOffset.UtcNow.AddMinutes(-2);
-        var documents = await dbContext.Documents
-            .Where(document =>
-                document.Status == DocumentStatus.Pending ||
-                document.Status == DocumentStatus.Processing && document.UpdatedAtUtc < staleProcessingCutoff)
+        var pendingDocuments = await dbContext.Documents
+            .Where(document => document.Status == DocumentStatus.Pending)
             .ToListAsync(cancellationToken);
+        var staleProcessingDocuments = (await dbContext.Documents
+                .Where(document => document.Status == DocumentStatus.Processing)
+                .ToListAsync(cancellationToken))
+            .Where(document => document.UpdatedAtUtc < staleProcessingCutoff);
 
-        foreach (var document in documents.OrderBy(document => document.CreatedAtUtc).Take(5))
+        var documents = pendingDocuments
+            .Concat(staleProcessingDocuments)
+            .OrderBy(document => document.CreatedAtUtc)
+            .Take(5)
+            .ToList();
+
+        foreach (var document in documents)
         {
             await IngestDocumentAsync(document.Id, cancellationToken);
         }
 
-        return Math.Min(documents.Count, 5);
+        return documents.Count;
     }
 
     public async Task IngestDocumentAsync(Guid documentId, CancellationToken cancellationToken)

@@ -2,6 +2,8 @@ using RAG.Core.Models;
 
 namespace RAG.Core.Services;
 
+public sealed class AiProviderException(string message, Exception? innerException = null) : Exception(message, innerException);
+
 public interface IObjectStorage
 {
     Task EnsureReadyAsync(CancellationToken cancellationToken);

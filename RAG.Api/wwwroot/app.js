@@ -17,6 +17,16 @@ async function fetchDocuments() {
     return response.json();
 }
 
+async function readResponsePayload(response) {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+        return response.json();
+    }
+
+    const text = await response.text();
+    return { error: text || response.statusText || `HTTP ${response.status}` };
+}
+
 function renderDocuments(documents) {
     if (documents.length === 0) {
         documentsNode.innerHTML = `<div class="row-meta">No documents uploaded.</div>`;
@@ -63,7 +73,7 @@ uploadForm.addEventListener("submit", async event => {
 
     try {
         const response = await fetch("/api/documents", { method: "POST", body });
-        const payload = await response.json();
+        const payload = await readResponsePayload(response);
         if (!response.ok) {
             throw new Error(payload.error ?? "Upload failed.");
         }
@@ -98,7 +108,7 @@ askForm.addEventListener("submit", async event => {
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ question })
         });
-        const payload = await response.json();
+        const payload = await readResponsePayload(response);
         if (!response.ok) {
             throw new Error(payload.error ?? "Question failed.");
         }
