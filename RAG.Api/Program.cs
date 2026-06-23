@@ -7,13 +7,18 @@ using RAG.Core.Models;
 using RAG.Core.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+var maxUploadBytes = builder.Configuration.GetValue<long>(
+    "Rag:Ingestion:MaxUploadBytes",
+    100 * 1024 * 1024);
 
 builder.Services.AddRagCore(builder.Configuration);
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = maxUploadBytes;
+});
 builder.Services.Configure<FormOptions>(options =>
 {
-    options.MultipartBodyLengthLimit = builder.Configuration.GetValue<long>(
-        "Rag:Ingestion:MaxUploadBytes",
-        100 * 1024 * 1024);
+    options.MultipartBodyLengthLimit = maxUploadBytes;
 });
 
 var app = builder.Build();
@@ -66,54 +71,72 @@ app.MapPost("/api/documents", async (
     IOptions<RagOptions> options,
     CancellationToken cancellationToken) =>
 {
-    if (!request.HasFormContentType)
+    try
     {
-        return Results.BadRequest(new { error = "Upload must be multipart form data." });
+        if (!request.HasFormContentType)
+        {
+            return Results.BadRequest(new { error = "Upload must be multipart form data." });
+        }
+
+        var form = await request.ReadFormAsync(cancellationToken);
+        var file = form.Files.GetFile("file") ?? form.Files.FirstOrDefault();
+        if (file is null || file.Length == 0)
+        {
+            return Results.BadRequest(new { error = "A PDF or TXT file is required." });
+        }
+
+        if (file.Length > options.Value.Ingestion.MaxUploadBytes)
+        {
+            return Results.BadRequest(new { error = $"File exceeds the {options.Value.Ingestion.MaxUploadBytes / 1024 / 1024} MB upload limit." });
+        }
+
+        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (extension is not ".pdf" and not ".txt")
+        {
+            return Results.BadRequest(new { error = "Only .pdf and .txt files are supported." });
+        }
+
+        var documentId = Guid.NewGuid();
+        var fileName = Path.GetFileName(file.FileName);
+        var contentType = string.IsNullOrWhiteSpace(file.ContentType)
+            ? extension == ".pdf" ? "application/pdf" : "text/plain"
+            : file.ContentType;
+        var objectKey = $"{documentId:N}/{fileName}";
+
+        await using var stream = file.OpenReadStream();
+        await storage.UploadAsync(objectKey, stream, contentType, cancellationToken);
+
+        var document = new DocumentRecord
+        {
+            Id = documentId,
+            FileName = fileName,
+            ContentType = contentType,
+            ObjectKey = objectKey,
+            Status = DocumentStatus.Pending,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            UpdatedAtUtc = DateTimeOffset.UtcNow
+        };
+
+        dbContext.Documents.Add(document);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return Results.Accepted($"/api/documents/{documentId}", new DocumentUploadResponse(documentId, document.Status.ToString()));
     }
-
-    var form = await request.ReadFormAsync(cancellationToken);
-    var file = form.Files.GetFile("file") ?? form.Files.FirstOrDefault();
-    if (file is null || file.Length == 0)
+    catch (BadHttpRequestException ex)
     {
-        return Results.BadRequest(new { error = "A PDF or TXT file is required." });
+        app.Logger.LogWarning(ex, "Upload request was rejected.");
+        return Results.BadRequest(new { error = ex.Message });
     }
-
-    if (file.Length > options.Value.Ingestion.MaxUploadBytes)
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
     {
-        return Results.BadRequest(new { error = $"File exceeds the {options.Value.Ingestion.MaxUploadBytes / 1024 / 1024} MB upload limit." });
+        app.Logger.LogWarning("Upload request was canceled by the client.");
+        return Results.Json(new { error = "Upload was canceled before the file was queued." }, statusCode: StatusCodes.Status499ClientClosedRequest);
     }
-
-    var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
-    if (extension is not ".pdf" and not ".txt")
+    catch (Exception ex)
     {
-        return Results.BadRequest(new { error = "Only .pdf and .txt files are supported." });
+        app.Logger.LogError(ex, "Upload failed before the document was queued.");
+        return Results.Json(new { error = $"Upload failed before the document was queued: {ex.Message}" }, statusCode: StatusCodes.Status500InternalServerError);
     }
-
-    var documentId = Guid.NewGuid();
-    var fileName = Path.GetFileName(file.FileName);
-    var contentType = string.IsNullOrWhiteSpace(file.ContentType)
-        ? extension == ".pdf" ? "application/pdf" : "text/plain"
-        : file.ContentType;
-    var objectKey = $"{documentId:N}/{fileName}";
-
-    await using var stream = file.OpenReadStream();
-    await storage.UploadAsync(objectKey, stream, contentType, cancellationToken);
-
-    var document = new DocumentRecord
-    {
-        Id = documentId,
-        FileName = fileName,
-        ContentType = contentType,
-        ObjectKey = objectKey,
-        Status = DocumentStatus.Pending,
-        CreatedAtUtc = DateTimeOffset.UtcNow,
-        UpdatedAtUtc = DateTimeOffset.UtcNow
-    };
-
-    dbContext.Documents.Add(document);
-    await dbContext.SaveChangesAsync(cancellationToken);
-
-    return Results.Accepted($"/api/documents/{documentId}", new DocumentUploadResponse(documentId, document.Status.ToString()));
 });
 
 app.MapPost("/api/ask", async (
