@@ -47,25 +47,28 @@ app.MapGet("/api/documents/{id:guid}", async (Guid id, RagDbContext dbContext, C
     return document is null ? Results.NotFound() : Results.Ok(ToStatusResponse(document));
 });
 
-app.MapPost("/api/documents/{id:guid}/reindex", async (Guid id, RagDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapDelete("/api/documents/{id:guid}", async (
+    Guid id,
+    IDocumentManagementService documents,
+    CancellationToken cancellationToken) =>
 {
-    var document = await dbContext.Documents.SingleOrDefaultAsync(document => document.Id == id, cancellationToken);
+    return await documents.DeleteDocumentAsync(id, cancellationToken)
+        ? Results.NoContent()
+        : Results.NotFound();
+});
+
+app.MapPost("/api/documents/{id:guid}/reindex", async (
+    Guid id,
+    IDocumentManagementService documents,
+    CancellationToken cancellationToken) =>
+{
+    var document = await documents.QueueReindexAsync(id, cancellationToken);
     if (document is null)
     {
         return Results.NotFound();
     }
 
-    document.Status = DocumentStatus.Pending;
-    document.ErrorMessage = null;
-    document.ChunkCount = 0;
-    document.ProgressStage = "Queued";
-    document.ProgressPercent = 0;
-    document.ProcessedChunks = 0;
-    document.TotalChunks = 0;
-    document.UpdatedAtUtc = DateTimeOffset.UtcNow;
-    await dbContext.SaveChangesAsync(cancellationToken);
-
-    return Results.Accepted($"/api/documents/{id}", ToStatusResponse(document));
+    return Results.Accepted($"/api/documents/{id}", document);
 });
 
 app.MapPost("/api/documents", async (
@@ -124,6 +127,12 @@ app.MapPost("/api/documents", async (
 
         dbContext.Documents.Add(document);
         await dbContext.SaveChangesAsync(cancellationToken);
+        app.Logger.LogInformation(
+            "Upload accepted for document {DocumentId} ({FileName}, {ContentType}, {FileSizeBytes} bytes).",
+            documentId,
+            fileName,
+            contentType,
+            file.Length);
 
         return Results.Accepted($"/api/documents/{documentId}", new DocumentUploadResponse(documentId, document.Status.ToString()));
     }
@@ -151,7 +160,16 @@ app.MapPost("/api/ask", async (
 {
     try
     {
+        app.Logger.LogInformation(
+            "Ask request received with {QuestionCharacters} question character(s), {SelectedDocumentCount} selected document(s), diagnostics={IncludeDiagnostics}.",
+            request.Question?.Length ?? 0,
+            request.DocumentIds?.Distinct().Count() ?? 0,
+            request.IncludeDiagnostics);
         var response = await chatAnswerService.AskAsync(request, cancellationToken);
+        app.Logger.LogInformation(
+            "Ask request completed with {CitationCount} citation(s), diagnostics={HasDiagnostics}.",
+            response.Citations.Count,
+            response.Diagnostics is not null);
         return Results.Ok(response);
     }
     catch (ArgumentException ex)
@@ -167,6 +185,50 @@ app.MapPost("/api/ask", async (
     {
         app.Logger.LogWarning(ex, "HTTP dependency failed while answering a question.");
         return Results.Json(new { error = "A downstream AI or vector service request failed. Check the Aspire logs for details." }, statusCode: StatusCodes.Status502BadGateway);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+        app.Logger.LogWarning("AI provider timed out while answering a question.");
+        return Results.Json(new { error = "The AI provider timed out while answering the question." }, statusCode: StatusCodes.Status504GatewayTimeout);
+    }
+});
+
+app.MapPost("/api/ask/debug", async (
+    AskRequest request,
+    IChatAnswerService chatAnswerService,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        app.Logger.LogInformation(
+            "Debug ask request received with {QuestionCharacters} question character(s), {SelectedDocumentCount} selected document(s).",
+            request.Question?.Length ?? 0,
+            request.DocumentIds?.Distinct().Count() ?? 0);
+        var response = await chatAnswerService.AskAsync(request with { IncludeDiagnostics = true }, cancellationToken);
+        app.Logger.LogInformation(
+            "Debug ask request completed with {CandidateCount} candidate(s) and {SelectedContextCount} selected context chunk(s).",
+            response.Diagnostics?.Candidates.Count ?? 0,
+            response.Diagnostics?.SelectedContext.Count ?? 0);
+        return Results.Ok(response);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+    catch (AiProviderException ex)
+    {
+        app.Logger.LogWarning(ex, "AI provider failed while answering a debug question.");
+        return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status502BadGateway);
+    }
+    catch (HttpRequestException ex)
+    {
+        app.Logger.LogWarning(ex, "HTTP dependency failed while answering a debug question.");
+        return Results.Json(new { error = "A downstream AI or vector service request failed. Check the Aspire logs for details." }, statusCode: StatusCodes.Status502BadGateway);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+        app.Logger.LogWarning("AI provider timed out while answering a debug question.");
+        return Results.Json(new { error = "The AI provider timed out while answering the question." }, statusCode: StatusCodes.Status504GatewayTimeout);
     }
 });
 

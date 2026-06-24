@@ -4,14 +4,23 @@ using RAG.Core.Models;
 
 namespace RAG.Core.Services;
 
-public sealed class TokenTextChunker(IOptions<RagOptions> options) : ITextChunker
+public sealed class ApproximateTokenEstimator : ITokenEstimator
+{
+    public IReadOnlyList<string> EstimateTokens(string text)
+    {
+        return text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+}
+
+public sealed class TokenTextChunker(IOptions<RagOptions> options, ITokenEstimator? tokenEstimator = null) : ITextChunker
 {
     private readonly IngestionOptions _options = options.Value.Ingestion;
+    private readonly ITokenEstimator _tokenEstimator = tokenEstimator ?? new ApproximateTokenEstimator();
 
     public IReadOnlyList<TextChunk> Chunk(Guid documentId, string fileName, string objectKey, ExtractedDocument document)
     {
         var tokens = document.Pages
-            .SelectMany(page => Tokenize(page.Text).Select(token => new TokenWithPage(token, page.PageNumber)))
+            .SelectMany(page => _tokenEstimator.EstimateTokens(page.Text).Select(token => new TokenWithPage(token, page.PageNumber)))
             .ToList();
 
         if (tokens.Count == 0)
@@ -49,11 +58,6 @@ public sealed class TokenTextChunker(IOptions<RagOptions> options) : ITextChunke
         }
 
         return chunks;
-    }
-
-    private static IEnumerable<string> Tokenize(string text)
-    {
-        return text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
     private sealed record TokenWithPage(string Text, int? PageNumber);

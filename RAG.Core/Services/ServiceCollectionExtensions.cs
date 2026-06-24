@@ -24,9 +24,13 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IObjectStorage, S3ObjectStorage>();
         services.AddSingleton<ITextExtractor, TextExtractor>();
+        services.AddSingleton<ITokenEstimator, ApproximateTokenEstimator>();
         services.AddSingleton<ITextChunker, TokenTextChunker>();
+        services.AddSingleton<IRetrievalReranker, HeuristicRetrievalReranker>();
         services.AddScoped<ILiteraryArtifactGenerator, LiteraryArtifactGenerator>();
+        services.AddScoped<IIngestionWorkSource, DatabaseIngestionWorkSource>();
         services.AddScoped<IDocumentIngestionService, DocumentIngestionService>();
+        services.AddScoped<IDocumentManagementService, DocumentManagementService>();
         services.AddScoped<IChatAnswerService, ChatAnswerService>();
         services.AddScoped<IAiProviderFactory, AiProviderFactory>();
 

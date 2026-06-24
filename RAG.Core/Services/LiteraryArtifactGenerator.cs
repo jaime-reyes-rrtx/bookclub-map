@@ -1,13 +1,25 @@
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using RAG.Core.Configuration;
 using RAG.Core.Models;
 
 namespace RAG.Core.Services;
 
 public sealed class LiteraryArtifactGenerator(
     ILiteraryAnalysisProvider analysisProvider,
+    IOptions<RagOptions> options,
     ILogger<LiteraryArtifactGenerator> logger) : ILiteraryArtifactGenerator
 {
+    private const string PromptVersion = "book-club-profile-v1";
+
+    public LiteraryArtifactGenerator(
+        ILiteraryAnalysisProvider analysisProvider,
+        ILogger<LiteraryArtifactGenerator> logger)
+        : this(analysisProvider, Options.Create(new RagOptions()), logger)
+    {
+    }
+
     public async Task<IReadOnlyList<TextChunk>> GenerateArtifactsAsync(
         Guid documentId,
         string fileName,
@@ -18,6 +30,15 @@ public sealed class LiteraryArtifactGenerator(
     {
         var candidateNames = ExtractLikelyNames(document).Take(40).ToList();
         var excerpts = SelectRepresentativeExcerpts(sourceChunks);
+        var generatedAtUtc = DateTimeOffset.UtcNow;
+        var sourceChunkIndexes = sourceChunks.Select(chunk => chunk.ChunkIndex).Distinct().Order().ToArray();
+        var sourcePageNumbers = sourceChunks
+            .Select(chunk => chunk.PageNumber)
+            .Where(page => page.HasValue)
+            .Select(page => page!.Value)
+            .Distinct()
+            .Order()
+            .ToArray();
         var artifacts = new List<TextChunk>
         {
             CreateArtifact(
@@ -27,7 +48,16 @@ public sealed class LiteraryArtifactGenerator(
                 -1,
                 "literary_name_profile",
                 "Literary name profile",
-                BuildNameProfile(fileName, candidateNames))
+                BuildNameProfile(fileName, candidateNames),
+                new ChunkProvenance(
+                    IsGenerated: true,
+                    ArtifactKind: "name-profile",
+                    Provider: "RAGPipeline",
+                    Model: "deterministic-name-extractor",
+                    PromptVersion: "deterministic-name-profile-v1",
+                    GeneratedAtUtc: generatedAtUtc,
+                    SourceChunkIndexes: sourceChunkIndexes,
+                    SourcePageNumbers: sourcePageNumbers))
         };
 
         try
@@ -47,7 +77,16 @@ public sealed class LiteraryArtifactGenerator(
                     -2,
                     "literary_book_club_profile",
                     "Book club literary profile",
-                    profile));
+                    profile,
+                    new ChunkProvenance(
+                        IsGenerated: true,
+                        ArtifactKind: "book-club-profile",
+                        Provider: options.Value.Ai.Provider,
+                        Model: options.Value.Ai.ChatModel,
+                        PromptVersion: PromptVersion,
+                        GeneratedAtUtc: generatedAtUtc,
+                        SourceChunkIndexes: sourceChunkIndexes,
+                        SourcePageNumbers: sourcePageNumbers)));
             }
         }
         catch (Exception ex)
@@ -65,7 +104,8 @@ public sealed class LiteraryArtifactGenerator(
         int chunkIndex,
         string chunkType,
         string title,
-        string text)
+        string text,
+        ChunkProvenance provenance)
     {
         return new TextChunk(
             Guid.NewGuid(),
@@ -76,7 +116,8 @@ public sealed class LiteraryArtifactGenerator(
             null,
             text,
             chunkType,
-            title);
+            title,
+            provenance);
     }
 
     private static string BuildNameProfile(string fileName, IReadOnlyList<string> candidateNames)

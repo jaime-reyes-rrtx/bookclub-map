@@ -16,9 +16,12 @@ public sealed record DocumentStatusResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc);
 
-public sealed record AskRequest(string Question, Guid[]? DocumentIds);
+public sealed record AskRequest(string Question, Guid[]? DocumentIds, bool IncludeDiagnostics = false);
 
-public sealed record AskResponse(string Answer, IReadOnlyList<CitationDto> Citations);
+public sealed record AskResponse(
+    string Answer,
+    IReadOnlyList<CitationDto> Citations,
+    RetrievalDiagnostics? Diagnostics = null);
 
 public sealed record CitationDto(
     Guid DocumentId,
@@ -26,7 +29,51 @@ public sealed record CitationDto(
     int ChunkIndex,
     int? PageNumber,
     double Score,
+    string Snippet,
+    string ChunkType = "source",
+    string? Title = null,
+    bool IsGeneratedArtifact = false,
+    string? ArtifactKind = null);
+
+public sealed record RetrievalDiagnostics(
+    string Question,
+    IReadOnlyList<RetrievalQueryDiagnostic> Queries,
+    IReadOnlyList<RetrievedCandidateDiagnostic> Candidates,
+    IReadOnlyList<SelectedContextDiagnostic> SelectedContext,
+    bool IsComparisonQuestion,
+    IReadOnlyList<string> NamedSubjects);
+
+public sealed record RetrievalQueryDiagnostic(string Text, string? NamedSubject);
+
+public sealed record RetrievedCandidateDiagnostic(
+    Guid DocumentId,
+    string FileName,
+    int ChunkIndex,
+    string ChunkType,
+    string? Title,
+    double VectorScore,
+    double FinalRank,
+    IReadOnlyList<string> RankReasons,
+    bool Selected);
+
+public sealed record SelectedContextDiagnostic(
+    Guid DocumentId,
+    string FileName,
+    int ChunkIndex,
+    string ChunkType,
+    string? Title,
+    double FinalRank,
     string Snippet);
+
+public sealed record ChunkProvenance(
+    bool IsGenerated = false,
+    string? ArtifactKind = null,
+    string? Provider = null,
+    string? Model = null,
+    string? PromptVersion = null,
+    DateTimeOffset? GeneratedAtUtc = null,
+    IReadOnlyList<int>? SourceChunkIndexes = null,
+    IReadOnlyList<int>? SourcePageNumbers = null);
 
 public sealed record ExtractedPage(int? PageNumber, string Text);
 
@@ -41,7 +88,8 @@ public sealed record TextChunk(
     int? PageNumber,
     string Text,
     string ChunkType = "source",
-    string Title = "");
+    string Title = "",
+    ChunkProvenance? Provenance = null);
 
 public sealed record EmbeddedChunk(TextChunk Chunk, float[] Embedding);
 
@@ -54,4 +102,5 @@ public sealed record RetrievedChunk(
     string Text,
     double Score,
     string ChunkType = "source",
-    string Title = "");
+    string Title = "",
+    ChunkProvenance? Provenance = null);

@@ -7,6 +7,7 @@ public sealed class RagOptions
     public AiOptions Ai { get; set; } = new();
     public QdrantOptions Qdrant { get; set; } = new();
     public IngestionOptions Ingestion { get; set; } = new();
+    public RequestOptions Request { get; set; } = new();
 }
 
 public sealed class StorageOptions
@@ -38,8 +39,17 @@ public sealed class QdrantOptions
 
 public sealed class IngestionOptions
 {
+    // The default chunker uses an approximate whitespace token estimator, not a provider-specific tokenizer.
     public int ChunkTokenCount { get; set; } = 800;
     public int ChunkOverlapTokens { get; set; } = 100;
     public long MaxUploadBytes { get; set; } = 100 * 1024 * 1024;
     public int PollIntervalSeconds { get; set; } = 5;
+}
+
+public sealed class RequestOptions
+{
+    public int MaxQuestionCharacters { get; set; } = 2000;
+    public int MaxSelectedDocuments { get; set; } = 20;
+    public int MaxRetrievalQueries { get; set; } = 12;
+    public int ProviderTimeoutSeconds { get; set; } = 90;
 }

@@ -119,6 +119,11 @@ public sealed class DocumentIngestionServiceTests
         {
             return Task.FromResult<Stream>(new MemoryStream(Encoding.UTF8.GetBytes(content)));
         }
+
+        public Task DeleteAsync(string objectKey, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FailingObjectStorage : IObjectStorage
@@ -136,6 +141,11 @@ public sealed class DocumentIngestionServiceTests
         public Task<Stream> OpenReadAsync(string objectKey, CancellationToken cancellationToken)
         {
             return Task.FromResult<Stream>(Stream.Null);
+        }
+
+        public Task DeleteAsync(string objectKey, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
         }
     }
 

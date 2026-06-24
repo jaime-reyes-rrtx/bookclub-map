@@ -13,31 +13,42 @@ public sealed class DocumentIngestionService(
     ILiteraryArtifactGenerator literaryArtifacts,
     IEmbeddingProvider embeddings,
     IVectorStore vectorStore,
+    IIngestionWorkSource workSource,
     ILogger<DocumentIngestionService> logger) : IDocumentIngestionService
 {
+    public DocumentIngestionService(
+        RagDbContext dbContext,
+        IObjectStorage storage,
+        ITextExtractor extractor,
+        ITextChunker chunker,
+        ILiteraryArtifactGenerator literaryArtifacts,
+        IEmbeddingProvider embeddings,
+        IVectorStore vectorStore,
+        ILogger<DocumentIngestionService> logger)
+        : this(
+            dbContext,
+            storage,
+            extractor,
+            chunker,
+            literaryArtifacts,
+            embeddings,
+            vectorStore,
+            new DatabaseIngestionWorkSource(dbContext),
+            logger)
+    {
+    }
+
     public async Task<int> IngestPendingDocumentsAsync(CancellationToken cancellationToken)
     {
-        var staleProcessingCutoff = DateTimeOffset.UtcNow.AddMinutes(-2);
-        var pendingDocuments = await dbContext.Documents
-            .Where(document => document.Status == DocumentStatus.Pending)
-            .ToListAsync(cancellationToken);
-        var staleProcessingDocuments = (await dbContext.Documents
-                .Where(document => document.Status == DocumentStatus.Processing)
-                .ToListAsync(cancellationToken))
-            .Where(document => document.UpdatedAtUtc < staleProcessingCutoff);
+        var documentIds = await workSource.GetNextDocumentIdsAsync(cancellationToken);
+        logger.LogInformation("Ingestion work source returned {DocumentCount} document(s).", documentIds.Count);
 
-        var documents = pendingDocuments
-            .Concat(staleProcessingDocuments)
-            .OrderBy(document => document.CreatedAtUtc)
-            .Take(5)
-            .ToList();
-
-        foreach (var document in documents)
+        foreach (var documentId in documentIds)
         {
-            await IngestDocumentAsync(document.Id, cancellationToken);
+            await IngestDocumentAsync(documentId, cancellationToken);
         }
 
-        return documents.Count;
+        return documentIds.Count;
     }
 
     public async Task IngestDocumentAsync(Guid documentId, CancellationToken cancellationToken)
@@ -60,6 +71,10 @@ public sealed class DocumentIngestionService(
         document.ProcessedChunks = 0;
         document.TotalChunks = 0;
         await UpdateProgressAsync(document, "Preparing storage", 2, cancellationToken);
+        logger.LogInformation(
+            "Ingestion started for document {DocumentId} ({FileName}).",
+            document.Id,
+            document.FileName);
 
         try
         {
@@ -69,9 +84,17 @@ public sealed class DocumentIngestionService(
             await UpdateProgressAsync(document, "Extracting text", 8, cancellationToken);
             await using var original = await storage.OpenReadAsync(document.ObjectKey, cancellationToken);
             var extracted = await extractor.ExtractAsync(original, document.ContentType, document.FileName, cancellationToken);
+            logger.LogInformation(
+                "Extracted {PageCount} page(s) from document {DocumentId}.",
+                extracted.Pages.Count,
+                document.Id);
 
             await UpdateProgressAsync(document, "Chunking text", 18, cancellationToken);
             var sourceChunks = chunker.Chunk(document.Id, document.FileName, document.ObjectKey, extracted);
+            logger.LogInformation(
+                "Created {SourceChunkCount} source chunk(s) for document {DocumentId}.",
+                sourceChunks.Count,
+                document.Id);
 
             await UpdateProgressAsync(document, "Building book club profile", 25, cancellationToken);
             var artifactChunks = await literaryArtifacts.GenerateArtifactsAsync(
@@ -81,6 +104,10 @@ public sealed class DocumentIngestionService(
                 extracted,
                 sourceChunks,
                 cancellationToken);
+            logger.LogInformation(
+                "Created {GeneratedArtifactCount} generated artifact chunk(s) for document {DocumentId}.",
+                artifactChunks.Count,
+                document.Id);
             var chunks = artifactChunks.Concat(sourceChunks).ToList();
             var embedded = new List<EmbeddedChunk>(chunks.Count);
 
@@ -94,6 +121,13 @@ public sealed class DocumentIngestionService(
                 var embedding = await embeddings.GenerateEmbeddingAsync(chunk.Text, cancellationToken);
                 embedded.Add(new EmbeddedChunk(chunk, embedding));
                 document.ProcessedChunks = embedded.Count;
+                if (embedded.Count == chunks.Count)
+                {
+                    logger.LogInformation(
+                        "Generated {EmbeddingCount} embedding(s) for document {DocumentId}.",
+                        embedded.Count,
+                        document.Id);
+                }
 
                 if (ShouldSaveEmbeddingProgress(embedded.Count, chunks.Count))
                 {
@@ -104,12 +138,20 @@ public sealed class DocumentIngestionService(
 
             await UpdateProgressAsync(document, "Writing vector index", 92, cancellationToken);
             await vectorStore.UpsertChunksAsync(embedded, cancellationToken);
+            logger.LogInformation(
+                "Upserted {VectorCount} vector point(s) for document {DocumentId}.",
+                embedded.Count,
+                document.Id);
 
             document.Status = DocumentStatus.Indexed;
             document.ChunkCount = embedded.Count;
             document.ProcessedChunks = embedded.Count;
             document.TotalChunks = embedded.Count;
             await UpdateProgressAsync(document, "Ready", 100, cancellationToken);
+            logger.LogInformation(
+                "Ingestion completed for document {DocumentId} with {ChunkCount} total chunk(s).",
+                document.Id,
+                document.ChunkCount);
         }
         catch (Exception ex)
         {

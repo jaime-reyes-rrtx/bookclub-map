@@ -66,4 +66,9 @@ public sealed class S3ObjectStorage : IObjectStorage
         memory.Position = 0;
         return memory;
     }
+
+    public async Task DeleteAsync(string objectKey, CancellationToken cancellationToken)
+    {
+        await _client.DeleteObjectAsync(_options.Bucket, objectKey, cancellationToken);
+    }
 }

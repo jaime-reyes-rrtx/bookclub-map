@@ -9,6 +9,7 @@ public interface IObjectStorage
     Task EnsureReadyAsync(CancellationToken cancellationToken);
     Task UploadAsync(string objectKey, Stream content, string contentType, CancellationToken cancellationToken);
     Task<Stream> OpenReadAsync(string objectKey, CancellationToken cancellationToken);
+    Task DeleteAsync(string objectKey, CancellationToken cancellationToken);
 }
 
 public interface ITextExtractor
@@ -21,6 +22,11 @@ public interface ITextChunker
     IReadOnlyList<TextChunk> Chunk(Guid documentId, string fileName, string objectKey, ExtractedDocument document);
 }
 
+public interface ITokenEstimator
+{
+    IReadOnlyList<string> EstimateTokens(string text);
+}
+
 public interface IEmbeddingProvider
 {
     Task<float[]> GenerateEmbeddingAsync(string input, CancellationToken cancellationToken);
@@ -29,6 +35,20 @@ public interface IEmbeddingProvider
 public interface IChatCompletionProvider
 {
     Task<string> GenerateAnswerAsync(string question, IReadOnlyList<RetrievedChunk> chunks, CancellationToken cancellationToken);
+}
+
+public sealed record RetrievalQuery(string Text, string? NamedSubject = null);
+
+public sealed record RetrievalContext(
+    string Question,
+    bool IsComparisonQuestion,
+    IReadOnlyList<string> NamedSubjects);
+
+public sealed record RankedChunk(RetrievedChunk Chunk, double Rank, IReadOnlyList<string> RankReasons);
+
+public interface IRetrievalReranker
+{
+    RankedChunk Rerank(RetrievedChunk candidate, RetrievalQuery query, RetrievalContext context);
 }
 
 public interface ILiteraryAnalysisProvider
@@ -81,6 +101,17 @@ public interface IDocumentIngestionService
 {
     Task<int> IngestPendingDocumentsAsync(CancellationToken cancellationToken);
     Task IngestDocumentAsync(Guid documentId, CancellationToken cancellationToken);
+}
+
+public interface IDocumentManagementService
+{
+    Task<bool> DeleteDocumentAsync(Guid documentId, CancellationToken cancellationToken);
+    Task<DocumentStatusResponse?> QueueReindexAsync(Guid documentId, CancellationToken cancellationToken);
+}
+
+public interface IIngestionWorkSource
+{
+    Task<IReadOnlyList<Guid>> GetNextDocumentIdsAsync(CancellationToken cancellationToken);
 }
 
 public interface IChatAnswerService

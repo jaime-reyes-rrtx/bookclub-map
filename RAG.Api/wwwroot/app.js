@@ -162,10 +162,26 @@ function renderCitations(citations) {
     citationsNode.innerHTML = citations.map((citation, index) => `
         <div class="citation-row">
             <span class="row-title">[${index + 1}] ${escapeHtml(citation.fileName)}</span>
-            <span class="row-meta">Chunk ${citation.chunkIndex}${citation.pageNumber ? `, page ${citation.pageNumber}` : ""} · score ${Number(citation.score).toFixed(3)}</span>
+            <span class="row-meta">${escapeHtml(citationLabel(citation))} · Chunk ${citation.chunkIndex}${citation.pageNumber ? `, page ${citation.pageNumber}` : ""} · score ${Number(citation.score).toFixed(3)}</span>
             <span class="row-meta">${escapeHtml(citation.snippet)}</span>
         </div>
     `).join("");
+}
+
+function citationLabel(citation) {
+    if (!citation.isGeneratedArtifact) {
+        return "Source text";
+    }
+
+    if (citation.artifactKind === "book-club-profile") {
+        return "Generated book-club profile";
+    }
+
+    if (citation.artifactKind === "name-profile") {
+        return "Generated name profile";
+    }
+
+    return "Generated retrieval aid";
 }
 
 function escapeHtml(value) {

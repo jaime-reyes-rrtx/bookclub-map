@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using RAG.Core.Configuration;
 using RAG.Core.Models;
 using RAG.Core.Services;
 
@@ -11,7 +13,13 @@ public sealed class LiteraryArtifactGeneratorTests
     {
         var documentId = Guid.NewGuid();
         var provider = new RecordingLiteraryAnalysisProvider("Likely protagonists: Alice Morgan\nThemes: curiosity.");
-        var generator = new LiteraryArtifactGenerator(provider, NullLogger<LiteraryArtifactGenerator>.Instance);
+        var generator = new LiteraryArtifactGenerator(
+            provider,
+            Options.Create(new RagOptions
+            {
+                Ai = new AiOptions { Provider = "Ollama", ChatModel = "llama3.2" }
+            }),
+            NullLogger<LiteraryArtifactGenerator>.Instance);
         var sourceChunks = new[]
         {
             new TextChunk(Guid.NewGuid(), documentId, "novel.txt", "objects/novel.txt", 0, 1, "Alice Morgan met Bruno Stone in the library."),
@@ -33,6 +41,11 @@ public sealed class LiteraryArtifactGeneratorTests
         Assert.Equal(2, artifacts.Count);
         Assert.Contains(artifacts, chunk => chunk.ChunkType == "literary_name_profile" && chunk.Text.Contains("Alice Morgan"));
         Assert.Contains(artifacts, chunk => chunk.ChunkType == "literary_book_club_profile" && chunk.Text.Contains("Themes: curiosity."));
+        Assert.All(artifacts, chunk => Assert.True(chunk.Provenance?.IsGenerated));
+        Assert.Contains(artifacts, chunk => chunk.Provenance?.ArtifactKind == "name-profile" && chunk.Provenance.Model == "deterministic-name-extractor");
+        Assert.Contains(artifacts, chunk => chunk.Provenance?.ArtifactKind == "book-club-profile" && chunk.Provenance.Provider == "Ollama" && chunk.Provenance.Model == "llama3.2");
+        Assert.All(artifacts, chunk => Assert.Equal([0, 1], chunk.Provenance?.SourceChunkIndexes));
+        Assert.All(artifacts, chunk => Assert.Equal([1, 2], chunk.Provenance?.SourcePageNumbers));
         Assert.Contains("Alice Morgan", provider.CandidateNames);
         Assert.Equal(2, provider.Excerpts.Count);
     }

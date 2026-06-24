@@ -69,4 +69,45 @@ public sealed class TextChunkerTests
         Assert.StartsWith("token26 token27", chunks[1].Text);
         Assert.StartsWith("token51 token52", chunks[2].Text);
     }
+
+    [Fact]
+    public void ApproximateTokenEstimator_SplitsOnWhitespace()
+    {
+        var estimator = new ApproximateTokenEstimator();
+
+        var tokens = estimator.EstimateTokens("one  two\tthree\nfour");
+
+        Assert.Equal(["one", "two", "three", "four"], tokens);
+    }
+
+    [Fact]
+    public void Chunk_UsesInjectedTokenEstimator()
+    {
+        var options = Options.Create(new RagOptions
+        {
+            Ingestion = new IngestionOptions
+            {
+                ChunkTokenCount = 50,
+                ChunkOverlapTokens = 0
+            }
+        });
+        var chunker = new TokenTextChunker(options, new FixedTokenEstimator(["alpha", "beta", "gamma"]));
+
+        var chunks = chunker.Chunk(
+            Guid.NewGuid(),
+            "sample.txt",
+            "objects/sample.txt",
+            new ExtractedDocument([new ExtractedPage(null, "ignored by fake estimator")]));
+
+        var chunk = Assert.Single(chunks);
+        Assert.Equal("alpha beta gamma", chunk.Text);
+    }
+
+    private sealed class FixedTokenEstimator(IReadOnlyList<string> tokens) : ITokenEstimator
+    {
+        public IReadOnlyList<string> EstimateTokens(string text)
+        {
+            return tokens;
+        }
+    }
 }

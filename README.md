@@ -27,7 +27,7 @@ Browser UI
 - `RAG.Api`: serves the upload/chat UI and HTTP endpoints.
 - `RAG.Worker`: processes pending documents in the background.
 - `RAG.Core`: shared models, EF Core metadata, providers, vector store, ingestion, and ask logic.
-- `RAG.Tests`: focused unit tests for chunking, provider registration, and answer retrieval behavior.
+- `RAG.Tests`: focused unit tests and deterministic golden-question evals for chunking, provider registration, retrieval behavior, citations, and guardrails.
 
 ## Technologies
 
@@ -111,6 +111,7 @@ Important settings:
 - `Rag:Qdrant:*`: vector database URL, collection name, and vector size.
 - `Rag:Ai:*`: provider, base URL, embedding model, chat model, timeout.
 - `Rag:Ingestion:*`: chunk size, overlap, upload limit, and worker polling interval.
+- `Rag:Request:*`: question length, selected-document count, retrieval-query cap, and provider timeout guardrails.
 
 The AppHost automatically chooses Gemini when `GEMINI_API_KEY` is present, unless `RAG_AI_PROVIDER` or `Rag__Ai__Provider` is set explicitly.
 
@@ -123,7 +124,11 @@ This project is not intended to be a production-ready RAG platform. It is a prac
 - designing provider-neutral AI abstractions;
 - storing original documents separately from vector chunks;
 - enriching documents with generated literary artifacts before embedding;
+- tracking provenance for generated retrieval artifacts;
 - balancing semantic, profile, and exact-name retrieval;
-- returning answers with traceable citations.
+- inspecting retrieval behavior through optional diagnostics;
+- replacing heuristic reranking or database polling through small interfaces;
+- deleting and reindexing documents through lifecycle endpoints;
+- returning answers with traceable citations and optional retrieval diagnostics.
 
-See [TUTORIAL.md](TUTORIAL.md) for a deeper walkthrough.
+See [Sandy Brook Labs RAG guide](https://sandybrook.io/guides/rag) for a deeper walkthrough.

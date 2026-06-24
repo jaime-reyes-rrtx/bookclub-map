@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Options;
+using RAG.Core.Configuration;
 using RAG.Core.Models;
 using RAG.Core.Services;
 
@@ -206,6 +208,165 @@ public sealed class ChatAnswerServiceTests
         Assert.Contains("Calpurnia and Hermione", response.Answer);
     }
 
+    [Fact]
+    public async Task AskAsync_ReturnsCitationProvenanceForGeneratedArtifacts()
+    {
+        var chunk = new RetrievedChunk(
+            Guid.NewGuid(),
+            "novel.txt",
+            -2,
+            null,
+            "objects/novel.txt",
+            "Likely protagonists: Alice Morgan.",
+            .97,
+            "literary_book_club_profile",
+            "Book club literary profile",
+            new ChunkProvenance(IsGenerated: true, ArtifactKind: "book-club-profile"));
+        var service = new ChatAnswerService(
+            new StubEmbeddingProvider(),
+            new StubVectorStore([chunk]),
+            new StubChatProvider("Alice Morgan is central [1]."));
+
+        var response = await service.AskAsync(new AskRequest("Who is Alice Morgan?", null), CancellationToken.None);
+
+        var citation = Assert.Single(response.Citations);
+        Assert.True(citation.IsGeneratedArtifact);
+        Assert.Equal("literary_book_club_profile", citation.ChunkType);
+        Assert.Equal("book-club-profile", citation.ArtifactKind);
+        Assert.Equal("Book club literary profile", citation.Title);
+    }
+
+    [Fact]
+    public async Task AskAsync_IncludesDiagnosticsWhenRequested()
+    {
+        var chunk = new RetrievedChunk(
+            Guid.NewGuid(),
+            "guide.txt",
+            0,
+            1,
+            "objects/guide.txt",
+            "Qdrant stores the searchable vectors.",
+            .88);
+        var service = new ChatAnswerService(
+            new StubEmbeddingProvider(),
+            new StubVectorStore([chunk]),
+            new StubChatProvider("Qdrant stores vectors [1]."));
+
+        var response = await service.AskAsync(
+            new AskRequest("Where are vectors stored?", null, IncludeDiagnostics: true),
+            CancellationToken.None);
+
+        Assert.NotNull(response.Diagnostics);
+        Assert.Contains(response.Diagnostics.Queries, query => query.Text == "Where are vectors stored?");
+        Assert.Contains(response.Diagnostics.Candidates, candidate => candidate.FileName == "guide.txt" && candidate.Selected);
+        Assert.Contains(response.Diagnostics.SelectedContext, selected => selected.Snippet.Contains("Qdrant"));
+    }
+
+    [Fact]
+    public async Task AskAsync_RejectsQuestionsOverConfiguredLimit()
+    {
+        var service = new ChatAnswerService(
+            new StubEmbeddingProvider(),
+            new StubVectorStore([]),
+            new StubChatProvider("unused"),
+            Options.Create(new RagOptions
+            {
+                Request = new RequestOptions { MaxQuestionCharacters = 8 }
+            }));
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.AskAsync(new AskRequest("This question is too long.", null), CancellationToken.None));
+
+        Assert.Contains("8 characters", exception.Message);
+    }
+
+    [Fact]
+    public async Task AskAsync_RejectsTooManySelectedDocuments()
+    {
+        var service = new ChatAnswerService(
+            new StubEmbeddingProvider(),
+            new StubVectorStore([]),
+            new StubChatProvider("unused"),
+            Options.Create(new RagOptions
+            {
+                Request = new RequestOptions { MaxSelectedDocuments = 1 }
+            }));
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.AskAsync(new AskRequest("What happened?", [Guid.NewGuid(), Guid.NewGuid()]), CancellationToken.None));
+
+        Assert.Contains("1 documents", exception.Message);
+    }
+
+    [Fact]
+    public async Task AskAsync_CapsExpandedRetrievalQueries()
+    {
+        var vectorStore = new StubVectorStore([]);
+        var service = new ChatAnswerService(
+            new StubEmbeddingProvider(),
+            vectorStore,
+            new StubChatProvider("unused"),
+            Options.Create(new RagOptions
+            {
+                Request = new RequestOptions { MaxRetrievalQueries = 2 }
+            }));
+
+        await service.AskAsync(
+            new AskRequest("Compare Harry Potter and Hermione Granger as protagonists.", null, IncludeDiagnostics: true),
+            CancellationToken.None);
+
+        Assert.Equal(2, vectorStore.SearchCount);
+    }
+
+    [Fact]
+    public async Task AskAsync_DiagnosticsExplainComparisonThresholdFiltering()
+    {
+        var lowRankChunk = new RetrievedChunk(
+            Guid.NewGuid(),
+            "unrelated.txt",
+            0,
+            null,
+            "objects/unrelated.txt",
+            "A generic passage without either named subject.",
+            .2);
+        var service = new ChatAnswerService(
+            new StubEmbeddingProvider(),
+            new StubVectorStore([lowRankChunk]),
+            new StubChatProvider("unused"));
+
+        var response = await service.AskAsync(
+            new AskRequest("Compare Alice Morgan and Bruno Stone.", null, IncludeDiagnostics: true),
+            CancellationToken.None);
+
+        var candidate = Assert.Single(response.Diagnostics!.Candidates);
+        Assert.False(candidate.Selected);
+        Assert.Contains("filtered below comparison rank threshold", candidate.RankReasons);
+    }
+
+    [Fact]
+    public async Task AskAsync_ProviderTimeoutCancelsSlowProvider()
+    {
+        var chunk = new RetrievedChunk(
+            Guid.NewGuid(),
+            "guide.txt",
+            0,
+            null,
+            "objects/guide.txt",
+            "Qdrant stores vectors.",
+            .9);
+        var service = new ChatAnswerService(
+            new StubEmbeddingProvider(),
+            new StubVectorStore([chunk]),
+            new SlowChatProvider(),
+            Options.Create(new RagOptions
+            {
+                Request = new RequestOptions { ProviderTimeoutSeconds = 1 }
+            }));
+
+        await Assert.ThrowsAsync<TaskCanceledException>(() =>
+            service.AskAsync(new AskRequest("Where are vectors stored?", null), CancellationToken.None));
+    }
+
 
     private sealed class StubEmbeddingProvider : IEmbeddingProvider
     {
@@ -220,6 +381,15 @@ public sealed class ChatAnswerServiceTests
         public Task<string> GenerateAnswerAsync(string question, IReadOnlyList<RetrievedChunk> chunks, CancellationToken cancellationToken)
         {
             return Task.FromResult(answer);
+        }
+    }
+
+    private sealed class SlowChatProvider : IChatCompletionProvider
+    {
+        public async Task<string> GenerateAnswerAsync(string question, IReadOnlyList<RetrievedChunk> chunks, CancellationToken cancellationToken)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+            return "too slow";
         }
     }
 

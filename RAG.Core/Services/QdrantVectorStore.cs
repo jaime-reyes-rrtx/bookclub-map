@@ -53,7 +53,15 @@ public sealed class QdrantVectorStore(HttpClient httpClient, IOptions<RagOptions
                 ["sourceObjectKey"] = chunk.Chunk.ObjectKey,
                 ["text"] = chunk.Chunk.Text,
                 ["chunkType"] = chunk.Chunk.ChunkType,
-                ["title"] = chunk.Chunk.Title
+                ["title"] = chunk.Chunk.Title,
+                ["isGeneratedArtifact"] = chunk.Chunk.Provenance?.IsGenerated ?? false,
+                ["artifactKind"] = chunk.Chunk.Provenance?.ArtifactKind,
+                ["artifactProvider"] = chunk.Chunk.Provenance?.Provider,
+                ["artifactModel"] = chunk.Chunk.Provenance?.Model,
+                ["artifactPromptVersion"] = chunk.Chunk.Provenance?.PromptVersion,
+                ["generatedAtUtc"] = chunk.Chunk.Provenance?.GeneratedAtUtc,
+                ["sourceChunkIndexes"] = chunk.Chunk.Provenance?.SourceChunkIndexes ?? [],
+                ["sourcePageNumbers"] = chunk.Chunk.Provenance?.SourcePageNumbers ?? []
             })).ToArray();
 
         using var response = await httpClient.PutAsJsonAsync(
@@ -247,6 +255,16 @@ public sealed class QdrantVectorStore(HttpClient httpClient, IOptions<RagOptions
             return null;
         }
 
+        var provenance = new ChunkProvenance(
+            IsGenerated: ReadBool(payload, "isGeneratedArtifact"),
+            ArtifactKind: EmptyToNull(ReadString(payload, "artifactKind")),
+            Provider: EmptyToNull(ReadString(payload, "artifactProvider")),
+            Model: EmptyToNull(ReadString(payload, "artifactModel")),
+            PromptVersion: EmptyToNull(ReadString(payload, "artifactPromptVersion")),
+            GeneratedAtUtc: ReadDateTimeOffset(payload, "generatedAtUtc"),
+            SourceChunkIndexes: ReadIntArray(payload, "sourceChunkIndexes"),
+            SourcePageNumbers: ReadIntArray(payload, "sourcePageNumbers"));
+
         return new RetrievedChunk(
             parsedDocumentId,
             ReadString(payload, "fileName"),
@@ -256,7 +274,8 @@ public sealed class QdrantVectorStore(HttpClient httpClient, IOptions<RagOptions
             ReadString(payload, "text"),
             score,
             ReadString(payload, "chunkType") is { Length: > 0 } chunkType ? chunkType : "source",
-            ReadString(payload, "title"));
+            ReadString(payload, "title"),
+            provenance);
     }
 
     private static string ReadString(Dictionary<string, JsonElement> payload, string key)
@@ -276,6 +295,42 @@ public sealed class QdrantVectorStore(HttpClient httpClient, IOptions<RagOptions
         return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed)
             ? parsed
             : null;
+    }
+
+    private static bool ReadBool(Dictionary<string, JsonElement> payload, string key)
+    {
+        return payload.TryGetValue(key, out var value) &&
+               value.ValueKind is JsonValueKind.True or JsonValueKind.False &&
+               value.GetBoolean();
+    }
+
+    private static DateTimeOffset? ReadDateTimeOffset(Dictionary<string, JsonElement> payload, string key)
+    {
+        if (!payload.TryGetValue(key, out var value) || value.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        return DateTimeOffset.TryParse(value.GetString(), out var parsed) ? parsed : null;
+    }
+
+    private static IReadOnlyList<int> ReadIntArray(Dictionary<string, JsonElement> payload, string key)
+    {
+        if (!payload.TryGetValue(key, out var value) || value.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return value.EnumerateArray()
+            .Select(item => item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out var parsed) ? parsed : (int?)null)
+            .Where(item => item.HasValue)
+            .Select(item => item!.Value)
+            .ToList();
+    }
+
+    private static string? EmptyToNull(string value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     private static bool ContainsPhrase(RetrievedChunk chunk, string phrase)
