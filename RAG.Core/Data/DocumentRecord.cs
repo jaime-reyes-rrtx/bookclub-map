@@ -9,6 +9,10 @@ public sealed class DocumentRecord
     public DocumentStatus Status { get; set; } = DocumentStatus.Pending;
     public string? ErrorMessage { get; set; }
     public int ChunkCount { get; set; }
+    public string ProgressStage { get; set; } = "Queued";
+    public int ProgressPercent { get; set; }
+    public int ProcessedChunks { get; set; }
+    public int TotalChunks { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
 }

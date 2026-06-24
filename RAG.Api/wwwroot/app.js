@@ -35,9 +35,7 @@ function renderDocuments(documents) {
 
     documentsNode.innerHTML = documents.map(document => {
         const failedClass = document.status === "Failed" ? " failed" : "";
-        const detail = document.errorMessage
-            ? `<span class="row-meta">${escapeHtml(document.errorMessage)}</span>`
-            : `<span class="row-meta">${document.chunkCount} chunks</span>`;
+        const detail = renderDocumentDetail(document);
 
         return `
             <div class="document-row">
@@ -47,6 +45,42 @@ function renderDocuments(documents) {
             </div>
         `;
     }).join("");
+}
+
+function renderDocumentDetail(document) {
+    if (document.errorMessage) {
+        return `<span class="row-meta">${escapeHtml(document.errorMessage)}</span>`;
+    }
+
+    if (document.status === "Pending" || document.status === "Processing") {
+        const percent = clampPercent(document.progressPercent ?? 0);
+        const chunkDetail = document.totalChunks > 0
+            ? ` · ${document.processedChunks}/${document.totalChunks} chunks`
+            : "";
+
+        return `
+            <div class="progress-detail">
+                <div class="progress-meta">
+                    <span>${escapeHtml(document.progressStage ?? document.status)}</span>
+                    <span>${percent}%${chunkDetail}</span>
+                </div>
+                <div class="progress-track" aria-label="Ingestion progress">
+                    <span style="width: ${percent}%"></span>
+                </div>
+            </div>
+        `;
+    }
+
+    return `<span class="row-meta">${document.chunkCount} chunks</span>`;
+}
+
+function clampPercent(value) {
+    const percent = Number(value);
+    if (!Number.isFinite(percent)) {
+        return 0;
+    }
+
+    return Math.max(0, Math.min(100, Math.round(percent)));
 }
 
 async function refreshDocuments() {

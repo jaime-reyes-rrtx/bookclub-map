@@ -15,6 +15,7 @@ public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbCon
         document.Property(x => x.ObjectKey).HasMaxLength(1024).IsRequired();
         document.Property(x => x.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
         document.Property(x => x.ErrorMessage).HasMaxLength(4000);
+        document.Property(x => x.ProgressStage).HasMaxLength(128).IsRequired();
         document.HasIndex(x => x.Status);
         document.HasIndex(x => x.CreatedAtUtc);
     }

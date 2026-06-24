@@ -109,14 +109,138 @@ public sealed class QdrantVectorStore(HttpClient httpClient, IOptions<RagOptions
             .ToList() ?? [];
     }
 
-    private static RetrievedChunk? ToRetrievedChunk(QdrantSearchResult result)
+    public async Task<IReadOnlyList<RetrievedChunk>> GetDocumentProfileChunksAsync(
+        IReadOnlyCollection<Guid>? documentIds,
+        CancellationToken cancellationToken)
     {
-        if (result.Payload is null)
+        await EnsureCollectionAsync(cancellationToken);
+
+        var filter = documentIds is { Count: > 0 }
+            ? new QdrantFilter([
+                new QdrantMust(
+                    "documentId",
+                    new QdrantMatchAny(documentIds.Select(id => id.ToString()).ToArray()))
+            ])
+            : null;
+        var profileChunks = new List<RetrievedChunk>();
+        JsonElement? offset = null;
+
+        for (var page = 0; page < 20; page++)
         {
-            return null;
+            using var response = await httpClient.PostAsJsonAsync(
+                $"/collections/{_options.CollectionName}/points/scroll",
+                new QdrantScrollRequest(filter, 256, WithPayload: true, WithVector: false, offset),
+                cancellationToken);
+
+            response.EnsureSuccessStatusCode();
+            var result = await response.Content.ReadFromJsonAsync<QdrantScrollResponse>(cancellationToken);
+            if (result?.Result?.Points is not { Count: > 0 } points)
+            {
+                break;
+            }
+
+            profileChunks.AddRange(points
+                .Select(ToRetrievedChunk)
+                .Where(chunk => chunk is { ChunkIndex: < 0 } || chunk?.ChunkType.StartsWith("literary_", StringComparison.OrdinalIgnoreCase) == true)
+                .Cast<RetrievedChunk>());
+
+            if (result.Result.NextPageOffset is null)
+            {
+                break;
+            }
+
+            offset = result.Result.NextPageOffset.Value.Clone();
         }
 
-        var payload = result.Payload;
+        return profileChunks;
+    }
+
+    public async Task<IReadOnlyList<RetrievedChunk>> GetChunksContainingTextAsync(
+        IReadOnlyCollection<string> terms,
+        IReadOnlyCollection<Guid>? documentIds,
+        int limitPerTerm,
+        CancellationToken cancellationToken)
+    {
+        if (terms.Count == 0 || limitPerTerm <= 0)
+        {
+            return [];
+        }
+
+        var normalizedTerms = terms
+            .Where(term => !string.IsNullOrWhiteSpace(term))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalizedTerms.Length == 0)
+        {
+            return [];
+        }
+
+        await EnsureCollectionAsync(cancellationToken);
+
+        var filter = documentIds is { Count: > 0 }
+            ? new QdrantFilter([
+                new QdrantMust(
+                    "documentId",
+                    new QdrantMatchAny(documentIds.Select(id => id.ToString()).ToArray()))
+            ])
+            : null;
+        var matches = new Dictionary<string, RetrievedChunk>(StringComparer.Ordinal);
+        var termCounts = normalizedTerms.ToDictionary(term => term, _ => 0, StringComparer.OrdinalIgnoreCase);
+        JsonElement? offset = null;
+
+        for (var page = 0; page < 20 && termCounts.Values.Any(count => count < limitPerTerm); page++)
+        {
+            using var response = await httpClient.PostAsJsonAsync(
+                $"/collections/{_options.CollectionName}/points/scroll",
+                new QdrantScrollRequest(filter, 256, WithPayload: true, WithVector: false, offset),
+                cancellationToken);
+
+            response.EnsureSuccessStatusCode();
+            var result = await response.Content.ReadFromJsonAsync<QdrantScrollResponse>(cancellationToken);
+            if (result?.Result?.Points is not { Count: > 0 } points)
+            {
+                break;
+            }
+
+            foreach (var chunk in points.Select(ToRetrievedChunk).Where(chunk => chunk is not null).Cast<RetrievedChunk>())
+            {
+                foreach (var term in normalizedTerms)
+                {
+                    if (termCounts[term] >= limitPerTerm || !ContainsPhrase(chunk, term))
+                    {
+                        continue;
+                    }
+
+                    var key = $"{chunk.DocumentId:N}:{chunk.ChunkIndex}:{chunk.ObjectKey}";
+                    matches.TryAdd(key, chunk);
+                    termCounts[term]++;
+                    break;
+                }
+            }
+
+            if (result.Result.NextPageOffset is null)
+            {
+                break;
+            }
+
+            offset = result.Result.NextPageOffset.Value.Clone();
+        }
+
+        return matches.Values.ToList();
+    }
+
+    private static RetrievedChunk? ToRetrievedChunk(QdrantSearchResult result)
+    {
+        return result.Payload is null ? null : ToRetrievedChunk(result.Payload, result.Score);
+    }
+
+    private static RetrievedChunk? ToRetrievedChunk(QdrantScrollPoint result)
+    {
+        return result.Payload is null ? null : ToRetrievedChunk(result.Payload, 0);
+    }
+
+    private static RetrievedChunk? ToRetrievedChunk(Dictionary<string, JsonElement> payload, double score)
+    {
         var documentId = ReadString(payload, "documentId");
         if (!Guid.TryParse(documentId, out var parsedDocumentId))
         {
@@ -130,7 +254,7 @@ public sealed class QdrantVectorStore(HttpClient httpClient, IOptions<RagOptions
             ReadInt(payload, "pageNumber"),
             ReadString(payload, "sourceObjectKey"),
             ReadString(payload, "text"),
-            result.Score,
+            score,
             ReadString(payload, "chunkType") is { Length: > 0 } chunkType ? chunkType : "source",
             ReadString(payload, "title"));
     }
@@ -152,6 +276,13 @@ public sealed class QdrantVectorStore(HttpClient httpClient, IOptions<RagOptions
         return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed)
             ? parsed
             : null;
+    }
+
+    private static bool ContainsPhrase(RetrievedChunk chunk, string phrase)
+    {
+        return chunk.Text.Contains(phrase, StringComparison.OrdinalIgnoreCase) ||
+               chunk.FileName.Contains(phrase, StringComparison.OrdinalIgnoreCase) ||
+               chunk.Title.Contains(phrase, StringComparison.OrdinalIgnoreCase);
     }
 }
 
@@ -179,6 +310,15 @@ internal sealed record QdrantSearchRequest(
     [property: JsonPropertyName("with_payload")] bool WithPayload,
     [property: JsonPropertyName("filter")] QdrantFilter? Filter);
 
+internal sealed record QdrantScrollRequest(
+    [property: JsonPropertyName("filter")] QdrantFilter? Filter,
+    [property: JsonPropertyName("limit")] int Limit,
+    [property: JsonPropertyName("with_payload")] bool WithPayload,
+    [property: JsonPropertyName("with_vector")] bool WithVector,
+    [property: JsonPropertyName("offset")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    JsonElement? Offset);
+
 internal sealed record QdrantFilter(
     [property: JsonPropertyName("must")] IReadOnlyList<QdrantMust> Must);
 
@@ -194,4 +334,14 @@ internal sealed record QdrantSearchResponse(
 
 internal sealed record QdrantSearchResult(
     [property: JsonPropertyName("score")] double Score,
+    [property: JsonPropertyName("payload")] Dictionary<string, JsonElement>? Payload);
+
+internal sealed record QdrantScrollResponse(
+    [property: JsonPropertyName("result")] QdrantScrollResult? Result);
+
+internal sealed record QdrantScrollResult(
+    [property: JsonPropertyName("points")] IReadOnlyList<QdrantScrollPoint>? Points,
+    [property: JsonPropertyName("next_page_offset")] JsonElement? NextPageOffset);
+
+internal sealed record QdrantScrollPoint(
     [property: JsonPropertyName("payload")] Dictionary<string, JsonElement>? Payload);

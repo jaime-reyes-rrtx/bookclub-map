@@ -8,6 +8,10 @@ public sealed record DocumentStatusResponse(
     string ContentType,
     string Status,
     int ChunkCount,
+    string ProgressStage,
+    int ProgressPercent,
+    int ProcessedChunks,
+    int TotalChunks,
     string? ErrorMessage,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc);

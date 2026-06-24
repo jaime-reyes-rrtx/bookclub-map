@@ -67,6 +67,14 @@ public interface IVectorStore
         int limit,
         IReadOnlyCollection<Guid>? documentIds,
         CancellationToken cancellationToken);
+    Task<IReadOnlyList<RetrievedChunk>> GetDocumentProfileChunksAsync(
+        IReadOnlyCollection<Guid>? documentIds,
+        CancellationToken cancellationToken);
+    Task<IReadOnlyList<RetrievedChunk>> GetChunksContainingTextAsync(
+        IReadOnlyCollection<string> terms,
+        IReadOnlyCollection<Guid>? documentIds,
+        int limitPerTerm,
+        CancellationToken cancellationToken);
 }
 
 public interface IDocumentIngestionService

@@ -58,6 +58,10 @@ app.MapPost("/api/documents/{id:guid}/reindex", async (Guid id, RagDbContext dbC
     document.Status = DocumentStatus.Pending;
     document.ErrorMessage = null;
     document.ChunkCount = 0;
+    document.ProgressStage = "Queued";
+    document.ProgressPercent = 0;
+    document.ProcessedChunks = 0;
+    document.TotalChunks = 0;
     document.UpdatedAtUtc = DateTimeOffset.UtcNow;
     await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -113,6 +117,7 @@ app.MapPost("/api/documents", async (
             ContentType = contentType,
             ObjectKey = objectKey,
             Status = DocumentStatus.Pending,
+            ProgressStage = "Queued",
             CreatedAtUtc = DateTimeOffset.UtcNow,
             UpdatedAtUtc = DateTimeOffset.UtcNow
         };
@@ -177,6 +182,10 @@ static DocumentStatusResponse ToStatusResponse(DocumentRecord document)
         document.ContentType,
         document.Status.ToString(),
         document.ChunkCount,
+        document.ProgressStage,
+        document.ProgressPercent,
+        document.ProcessedChunks,
+        document.TotalChunks,
         document.ErrorMessage,
         document.CreatedAtUtc,
         document.UpdatedAtUtc);
