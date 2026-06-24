@@ -102,6 +102,11 @@ You can override this with:
 export RAG_AI_PROVIDER="Gemini"
 ```
 
+| Option | Pros | Cons |
+| --- | --- | --- |
+| Local LLM with Ollama | Keeps prompts and document content on your machine. Works well for offline experimentation after models are downloaded. Avoids per-request API costs. | Requires local CPU/GPU, memory, and disk resources. Model downloads can be large. Responses are usually slower than hosted APIs on modest hardware. |
+| API-hosted LLM with Gemini | Requires no local model hosting. Usually provides faster responses and stronger model quality. Easier to scale beyond one development machine. | Sends prompts and retrieved document context to an external service. Requires an API key, network access, and provider billing/quotas. |
+
 The current Gemini defaults are:
 
 - Embedding model: `gemini-embedding-2`
@@ -111,6 +116,8 @@ The local Ollama defaults are:
 
 - Embedding model: `nomic-embed-text`
 - Chat model: `llama3.2`
+
+Note: RAG uses two model types because retrieval and answer generation are different jobs. The embedding model turns document chunks and user questions into numeric vectors, called embeddings, that capture semantic meaning. The vector store uses those embeddings to find chunks related to the question. The chat model then receives the question plus the retrieved chunks and writes the final answer.
 
 ## Chapter 3: Shared Configuration and Contracts
 
@@ -202,6 +209,8 @@ The UI polls `GET /api/documents` every few seconds. For large books, ingestion 
 - `processedChunks`
 - `totalChunks`
 
+Production note: polling is simple and works well for this local sample, but a production UI would usually subscribe to status updates instead. For example, the API could publish document progress events through SignalR, WebSockets, Server-Sent Events, or a message broker-backed notification service, and the browser could receive updates as they happen instead of repeatedly asking the API for the full document list.
+
 This lets the UI show useful progress instead of leaving a book stuck at a vague `Processing` state.
 
 ## Chapter 6: Object Storage with MinIO
@@ -286,9 +295,17 @@ The tokenizer is approximate, but the design goal is clear: produce chunks that 
 
 Overlap helps preserve continuity. If an important sentence falls near a boundary, overlap gives nearby chunks a chance to retain enough surrounding context.
 
+Note: `800` and `100` are starting values, not magic numbers. A `ChunkTokenCount` of `800` gives each embedded chunk enough room for paragraph-level context, which helps literary questions that depend on surrounding evidence. A smaller value such as `400` can improve pinpoint retrieval for short factual passages, but it creates more chunks, more embedding calls, more vector rows, and more chances to split related ideas apart. `ChunkOverlapTokens` is `100`, or 12.5% of the chunk size, so adjacent chunks share enough context without duplicating too much text. In practice, overlap is often tuned as a ratio, commonly around 10-20%, then adjusted for the document type and observed answer quality.
+
+The main limiting factors are the embedding model input limit, the chat model context window, retrieval count, latency, storage, and cost. Larger chunks reduce indexing volume but can make search results less precise. Smaller chunks improve precision but require retrieving more chunks to answer broader questions. More overlap preserves continuity but increases duplicate embeddings and vector storage. The right values should be measured against the questions the system needs to answer.
+
 ## Chapter 9: Literary Artifacts
 
 Simply embedding source text is often not enough. Broad questions like "Who are the protagonists?" or "What are the themes?" may not match one exact passage.
+
+This chapter is where the RAG pipeline starts to become a product instead of a generic document search demo. The raw retrieval system can find passages, but literary artifacts shape the system around the expectations of a book-club user. They give the application its domain behavior: this is what makes it a book-club chat instead of a travel-info chat, a legal-document chat, or a generic PDF chatbot.
+
+The important design question is not only "What text did we index?" It is also "What will real users ask, and what supporting knowledge should exist so the system can answer well?" For a book-club assistant, users often ask about characters, themes, setting, motivations, symbolism, and discussion prompts. Those questions may require synthesis across the whole book, not just one nearby paragraph.
 
 To improve this, the worker generates extra derived chunks:
 
@@ -296,6 +313,8 @@ To improve this, the worker generates extra derived chunks:
 - a name/entity profile.
 
 These are created by `RAG.Core/Services/LiteraryArtifactGenerator.cs` and the configured `ILiteraryAnalysisProvider`.
+
+The artifact generator reads representative source chunks and asks the selected AI provider to create structured, searchable summaries for the domain. These summaries are not a replacement for source chunks. They are additional retrieval targets that make broad, user-centered questions easier to answer.
 
 The generated artifacts are embedded and stored in Qdrant like normal chunks, but their `chunkType` identifies them:
 
@@ -305,6 +324,8 @@ literary_name_profile
 ```
 
 This is an important RAG lesson: the vector database can store both source material and generated support material. The support material should be designed around expected user questions.
+
+In a real project, this is where product analysis matters. A useful RAG system starts with the user's workflow, not only the database schema or model choice. If the product were a travel-info chat, the generated artifacts might focus on destinations, opening hours, transit options, weather, accessibility, and itinerary constraints. If it were a legal assistant, the artifacts might focus on parties, obligations, dates, clauses, risks, and definitions. The retrieval layer should reflect the job the user is trying to get done.
 
 For this MVP, the expected domain is book-club discussion, so the generated profile focuses on:
 
@@ -560,4 +581,4 @@ It also shows where the next production steps would be:
 - improve PDF extraction quality;
 - add background queue infrastructure for multi-worker deployments.
 
-The MVP is complete enough to teach how the pieces connect, while still being small enough for junior engineers to read end to end.
+The MVP is complete enough to teach how the pieces connect, while still being small enough for engineers to read end to end.
