@@ -75,6 +75,8 @@ The AppHost also creates persistent Docker volumes:
 
 Those volumes allow indexed vectors, uploaded files, and downloaded Ollama models to survive container restarts.
 
+Production note: these services are exposed on fixed local ports and MinIO uses sample credentials. That is acceptable for this learning project, which is not intended for production, but a real deployment should use private networking, managed secrets, and locked-down service access.
+
 Aspire injects configuration into the API and worker through environment variables:
 
 ```csharp
@@ -185,6 +187,8 @@ The endpoint:
 
 The API deliberately avoids doing extraction and embedding in the request. It queues work by creating a pending database row.
 
+Production note: the upload limit protects the request body, but this sample still trusts the uploaded file enough to store it and later process it. A production system would usually add stronger content validation, malware scanning, tighter per-user quotas, and generic error responses instead of returning internal exception details. This project keeps the behavior simple because it is a learning project, not production software.
+
 The UI in `RAG.Api/wwwroot` is intentionally plain:
 
 - `index.html`: structure for upload and chat.
@@ -257,11 +261,15 @@ Ready
 
 If any exception occurs, the document is marked `Failed` and the error message is surfaced to the UI.
 
+Production note: reindexing currently deletes the existing vectors before the replacement index has fully succeeded, and ingestion errors are shown directly in the UI for developer visibility. In production, a safer approach would build the replacement index first, swap only after success, and keep detailed exception text in logs rather than user-facing responses. This sample favors readability because it is a learning project.
+
 ## Chapter 8: Extracting and Chunking Text
 
 Text extraction lives in `RAG.Core/Services/TextExtractor.cs`.
 
 For TXT files, extraction is a direct UTF-8 read. For PDFs, the project uses PdfPig to extract page text. PDF text extraction is imperfect because PDFs are layout documents, not semantic text documents. That is why citations include page numbers when available, but the extracted text may contain odd spacing or artifacts.
+
+Production note: extraction and chunking are intentionally straightforward and materialize full files, extracted text, token lists, chunks, and embeddings in memory. That can become expensive or unstable with large files even when the upload is under the configured byte limit. A production pipeline would stream where possible, enforce extracted-text and token caps, and batch embedding/vector writes. This repository keeps the simple implementation because the goal is learning the flow, not production hardening.
 
 Chunking lives in `RAG.Core/Services/TextChunker.cs`.
 
@@ -402,6 +410,8 @@ It accepts:
 9. rank and filter candidates;
 10. send selected chunks to the chat provider;
 11. return answer and citations.
+
+Production note: this sample validates that the question is present, but it does not enforce a small question-specific length limit. In a production environment, especially with paid hosted models, you would normally cap request size, rate-limit users, and track token/cost usage. The current behavior is fine for a local learning project that is not intended for production.
 
 Broad literary questions get expanded queries:
 
